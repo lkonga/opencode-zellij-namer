@@ -336,6 +336,20 @@ function renameSession(
   }
 }
 
+const NOISE_COMMANDS = new Set([
+  "fg", "bg", "jobs",
+  "clear", "cls",
+  "pwd", "echo", "true", "false",
+]);
+
+function isNoiseCommand(cmd: string): boolean {
+  const trimmed = cmd.trim().toLowerCase();
+  return NOISE_COMMANDS.has(trimmed)
+    || /^%[0-9]/.test(trimmed)
+    || /^fg\s+%/.test(trimmed)
+    || /^bg\s+%/.test(trimmed);
+}
+
 function isValidEvent(e: unknown): e is PluginEvent {
   return typeof e === "object" && e !== null && "type" in e && typeof (e as PluginEvent).type === "string";
 }
@@ -440,7 +454,9 @@ export const ZellijNamer = async ({ directory }: { directory: string }) => {
       }
 
       if (event.type === "command.executed" && event.command && typeof event.command === "string") {
-        addSignal(state, `cmd:${event.command}`, config.maxSignals);
+        if (!isNoiseCommand(event.command)) {
+          addSignal(state, `cmd:${event.command}`, config.maxSignals);
+        }
       }
 
       if (event.type === "todo.updated") {
