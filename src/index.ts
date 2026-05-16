@@ -2,6 +2,7 @@ import { execFileSync, spawn } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import { join, resolve, basename } from "path";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { loadNoiseConfig, isNoiseCommand } from "./noise.js";
 
 const INTENTS = ["feat", "fix", "debug", "refactor", "test", "doc", "ops", "review", "spike"] as const;
 type Intent = (typeof INTENTS)[number];
@@ -340,61 +341,7 @@ function renameSession(
   }
 }
 
-const DEFAULT_NOISE_COMMANDS = [
-  "fg", "bg", "jobs",
-  "clear", "cls",
-  "pwd", "echo", "true", "false",
-] as const;
 
-const DEFAULT_NOISE_PATTERNS = [
-  /^%[0-9]/,
-  /^fg\s+%/,
-  /^bg\s+%/,
-] as const;
-
-const noiseCommands: Set<string> = new Set(DEFAULT_NOISE_COMMANDS);
-const noisePatterns: RegExp[] = [...DEFAULT_NOISE_PATTERNS];
-
-function loadNoiseConfig(config: PluginConfig): void {
-  if (config.noiseExtra) {
-    for (const entry of config.noiseExtra.split(",")) {
-      const trimmed = entry.trim().toLowerCase();
-      if (!trimmed) continue;
-      if (trimmed.startsWith("-")) {
-        noiseCommands.delete(trimmed.slice(1));
-      } else {
-        noiseCommands.add(trimmed);
-      }
-    }
-  }
-  if (config.noisePatterns) {
-    for (const entry of config.noisePatterns.split(",")) {
-      const trimmed = entry.trim();
-      if (!trimmed) continue;
-      try {
-        noisePatterns.push(new RegExp(trimmed, "i"));
-      } catch {
-        /* skip invalid regex */
-      }
-    }
-  }
-}
-
-function resetNoiseConfig(): void {
-  noiseCommands.clear();
-  noisePatterns.length = 0;
-  for (const cmd of DEFAULT_NOISE_COMMANDS) noiseCommands.add(cmd);
-  for (const re of DEFAULT_NOISE_PATTERNS) noisePatterns.push(re);
-}
-
-function isNoiseCommand(cmd: string): boolean {
-  const trimmed = cmd.trim().toLowerCase();
-  if (noiseCommands.has(trimmed)) return true;
-  for (const re of noisePatterns) {
-    if (re.test(trimmed)) return true;
-  }
-  return false;
-}
 
 function isValidEvent(e: unknown): e is PluginEvent {
   return typeof e === "object" && e !== null && "type" in e && typeof (e as PluginEvent).type === "string";
@@ -429,7 +376,6 @@ export const ZellijNamer = async ({ directory }: { directory: string }) => {
   }
 
   log.debug(`Initialized with config: ${JSON.stringify({ ...config, debug: config.debug })}`);
-  log.debug(`Noise commands (${noiseCommands.size}): ${[...noiseCommands].join(", ")}`);
 
   // Trigger initial rename on plugin load
   process.nextTick(async () => {
@@ -482,47 +428,6 @@ export const ZellijNamer = async ({ directory }: { directory: string }) => {
     }
   }
 
-  function handleZellijNamerCmd(cmd: string): void {
-    const parts = cmd.slice(14).trim().split(/\s+/);
-    const sub = parts[0];
-    const args = parts.slice(1);
-
-    if (sub === "add" && args[0]) {
-      const name = args[0].toLowerCase();
-      noiseCommands.add(name);
-      log.debug(`Added noise command: ${name} (${noiseCommands.size} total)`);
-    } else if (sub === "remove" && args[0]) {
-      const name = args[0].toLowerCase();
-      noiseCommands.delete(name);
-      log.debug(`Removed noise command: ${name} (${noiseCommands.size} total)`);
-    } else if (sub === "pattern" && args[0] === "add" && args[1]) {
-      try {
-        const re = new RegExp(args.slice(1).join(" "), "i");
-        noisePatterns.push(re);
-        log.debug(`Added noise pattern: ${re.source}`);
-      } catch (e) {
-        log.error(`Invalid regex: ${e instanceof Error ? e.message : "unknown"}`);
-      }
-    } else if (sub === "pattern" && args[0] === "remove" && args[1]) {
-      const source = args.slice(1).join(" ");
-      const idx = noisePatterns.findIndex((r) => r.source === source);
-      if (idx >= 0) {
-        noisePatterns.splice(idx, 1);
-        log.debug(`Removed noise pattern: ${source}`);
-      } else {
-        log.debug(`Pattern not found: ${source}`);
-      }
-    } else if (sub === "list") {
-      log.debug(`Noise commands (${noiseCommands.size}): ${[...noiseCommands].join(", ")}`);
-      log.debug(`Noise patterns (${noisePatterns.length}): ${noisePatterns.map((r) => r.source).join(", ")}`);
-    } else if (sub === "reset") {
-      resetNoiseConfig();
-      log.debug(`Reset noise config to defaults`);
-    } else {
-      log.debug(`Unknown zellij-namer subcommand: ${sub}`);
-    }
-  }
-
   return {
     event: async ({ event }: { event: unknown }) => {
       if (!isValidEvent(event)) {
@@ -534,12 +439,7 @@ export const ZellijNamer = async ({ directory }: { directory: string }) => {
         const msgs = event.messages || [];
         const lastMsg = msgs[msgs.length - 1];
         if (lastMsg?.content && typeof lastMsg.content === "string") {
-          const content = lastMsg.content.trim();
-          if (content.startsWith("/zellij-namer ")) {
-            handleZellijNamerCmd(content);
-            return;
-          }
-          addSignal(state, content, config.maxSignals);
+          addSignal(state, lastMsg.content, config.maxSignals);
         }
         process.nextTick(() => maybeRename(directory).catch((e) => log.error(e?.message || "unknown")));
       }

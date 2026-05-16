@@ -4,6 +4,10 @@
   "description": "AI-powered dynamic Zellij session naming for OpenCode",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./tui": "./dist/tui.js"
+  },
   "type": "module",
   "scripts": {
     "build": "tsc",
@@ -39,6 +43,7 @@
     "@google/generative-ai": "^0.21.0"
   },
   "devDependencies": {
+    "@opencode-ai/plugin": "file:../../.opencode/node_modules/@opencode-ai/plugin",
     "@types/bun": "^1.1.0",
     "@types/node": "^20.0.0",
     "typescript": "^5.0.0"
